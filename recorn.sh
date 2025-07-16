@@ -1,43 +1,53 @@
 #!/bin/bash
 
-# 10B# Tobo is a red teamer and the team captain asked Tobo to create an automated recon tool in bash
-# which can scan tesla.com and dump the scan results in a separate folder named tesla.
-
-# Tools used:
-# a) Subfinder & Assetfinder - for finding subdomains (fast)
-# b) Httprobe - to check if subdomains are alive
-# c) Nmap - to scan live subdomains
+# Task 10B: Auto Recon Tool for tesla.com
+# Tools:
+# a) Subfinder & Assetfinder - Subdomain enumeration
+# b) Httprobe - Alive domain check
+# c) Nmap - Port scanning of alive domains
 
 domain="tesla.com"
 output_dir="tesla"
-
-echo "[+] Creating output directory: $output_dir"
 mkdir -p "$output_dir"
 
-# Step 1: Subdomain Enumeration
-echo "[+] Step 1: Enumerating subdomains with Subfinder & Assetfinder..."
+echo "[+] Step 1: Subdomain Enumeration"
 subfinder -d "$domain" -silent > "$output_dir/subdomains_subfinder.txt"
-if [ -x "$HOME/go/bin/assetfinder" ]; then
-    "$HOME/go/bin/assetfinder" --subs-only "$domain" > "$output_dir/subdomains_assetfinder.txt"
+
+if command -v assetfinder >/dev/null 2>&1; then
+    assetfinder --subs-only "$domain" > "$output_dir/subdomains_assetfinder.txt"
 else
-    echo "[-] assetfinder not found. Skipping assetfinder subdomains..."
+    echo "[-] Assetfinder not found, skipping..."
     touch "$output_dir/subdomains_assetfinder.txt"
 fi
 
-# Step 2: Merge and Clean
-echo "[+] Step 2: Merging and cleaning subdomains..."
+echo "[+] Step 2: Merging and Cleaning Subdomains"
 cat "$output_dir"/subdomains_*.txt | sort -u > "$output_dir/all_subdomains.txt"
 cat "$output_dir/all_subdomains.txt" | sed 's|http[s]*://||g' | sort -u > "$output_dir/cleaned_subs.txt"
 
-# Step 3: Alive Check
-echo "[+] Step 3: Probing for alive domains with Httprobe..."
-cat "$output_dir/cleaned_subs.txt" | httprobe | sort -u > "$output_dir/alive_subdomains.txt"
+echo "[+] Step 3: Probing for Alive Domains"
+cat "$output_dir/cleaned_subs.txt" | httprobe -c 20 | sort -u > "$output_dir/alive_subdomains.txt"
 
-# Step 4: Fast Parallel Nmap Scanning
-echo "[+] Step 4: Parallel Nmap scan (fast mode)..."
-cat "$output_dir/alive_subdomains.txt" | sed 's|http[s]*://||g' | xargs -P10 -I {} sh -c '
+echo "[+] Step 4: Fast Nmap Scanning (Parallel)"
+mkdir -p "$output_dir/nmap_scans"
+
+cat "$output_dir/alive_subdomains.txt" | sed 's|http[s]*://||g' | sort -u | \
+xargs -P20 -I{} sh -c '
     echo "[*] Scanning: {}"
-    nmap -Pn -n -T5 -F {} -oN '"$output_dir"'/nmap_{}.txt > /dev/null 2>&1
+    nmap -Pn -n -T5 -F {} -oN '"$output_dir"'/nmap_scans/nmap_{}.txt > /dev/null 2>&1
 '
 
-echo "[+] ✅ Recon Complete. All results saved to $output_dir/"
+echo "[+] Step 5: Creating Summary"
+{
+    echo "Recon Summary for $domain"
+    echo ""
+    echo "[*] Subdomains:"
+    cat "$output_dir/all_subdomains.txt"
+    echo ""
+    echo "[*] Alive Subdomains:"
+    cat "$output_dir/alive_subdomains.txt"
+    echo ""
+    echo "[*] Open Ports Summary:"
+    grep -H "open" "$output_dir/nmap_scans/"* | sed 's/^/    /'
+} > "$output_dir/summary.txt"
+
+echo "[+] Done. All outputs saved in '$output_dir/'"
